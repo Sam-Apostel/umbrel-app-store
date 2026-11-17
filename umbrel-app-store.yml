@@ -1,0 +1,2 @@
+id: "sam" # Every app ID in this store starts with "sam-".
+name: "Sam's Apps" # Shown in umbrelOS as "Sam's Apps App Store".

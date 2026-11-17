@@ -1,0 +1,144 @@
+name: Build Prusa Connect image
+
+# Prusa publishes no container image, so this builds one from the unmodified
+# source of an upstream release, for both architectures umbrelOS runs on, and
+# smoke-tests it with this store's own docker-compose.yml.
+#
+# Called by update.yml; can also be run by hand from the Actions tab.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Upstream release without the v, e.g. 0.1.0-beta.1"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+    outputs:
+      digest:
+        description: "Digest of the multi-arch image index"
+        value: ${{ jobs.merge.outputs.digest }}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/sam-apostel/prusa-connect
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Native runners on both: building Go and Node under QEMU takes hours.
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out Prusa Connect v${{ inputs.version }}
+        uses: actions/checkout@v4
+        with:
+          repository: prusa3d/prusa-connect
+          ref: v${{ inputs.version }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BUILD_VERSION=${{ inputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.title=Prusa Connect
+            org.opencontainers.image.description=Built on Prusa Connect by Prusa Research, from the unmodified source of release v${{ inputs.version }} (github.com/prusa3d/prusa-connect)
+            org.opencontainers.image.licenses=LicenseRef-OCL-1.1-Micro-NoSaaS-SWAtt
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: Export digest
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${RUNNER_TEMP}/digests/${digest#sha256:}"
+          echo "PLATFORM_PAIR=$(echo '${{ matrix.platform }}' | tr / -)" >> "${GITHUB_ENV}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Publish multi-arch image
+    runs-on: ubuntu-24.04
+    needs: build
+    outputs:
+      digest: ${{ steps.inspect.outputs.digest }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the manifest list
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create -t "${IMAGE}:${{ inputs.version }}" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Read its digest
+        id: inspect
+        run: |
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${{ inputs.version }}" --format '{{json .Manifest}}' | jq -r .digest)"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "Published ${IMAGE}:${{ inputs.version }}@${digest}" >> "${GITHUB_STEP_SUMMARY}"
+
+  smoke:
+    name: Smoke test ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    needs: merge
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Logged out on purpose: umbrelOS pulls anonymously, so this also proves
+      # the package is public.
+      - name: Run the app the way umbrelOS does
+        run: bash .github/scripts/smoke.sh "${IMAGE}:${{ inputs.version }}@${{ needs.merge.outputs.digest }}" "${{ inputs.version }}"

@@ -1,0 +1,53 @@
+manifestVersion: 1
+id: sam-prusa-connect
+storage:
+  dataRoot: data
+category: automation
+name: Prusa Connect
+version: "0.1.0-beta.1"
+tagline: Run Prusa Connect for your 3D printers on your own Umbrel
+icon: https://raw.githubusercontent.com/sam-apostel/umbrel-app-store/main/sam-prusa-connect/icon.svg
+description: >-
+  Prusa Connect is Prusa Research's server for 3D printers, which you run yourself. Your printers
+  connect to your Umbrel over your own network, not to the cloud, and accounts, printers, print
+  history and print files stay on your Umbrel.
+
+
+  Use it to see every printer's state, temperatures and progress live, send G-code to a printer
+  and start, pause, resume or stop a print, and give each person only the printers and actions you
+  choose. Other programs can use its REST API, live events, MQTT and webhooks.
+
+
+  First run: open the app and enter the password umbrelOS shows for this app as the setup code.
+  Then create your own administrator account in the setup wizard. Keep the folder for uploads at
+  /storage, the wizard's default, so your print files survive updates.
+
+
+  To add a printer, open the app by your Umbrel's IP address (for example
+  http://192.168.1.20:8580), not umbrel.local, and use "Add a printer". The settings file it
+  offers for the printer's USB drive then holds an address the printer can reach.
+
+
+  Prusa Connect is in public beta: back up before you update. Built from the unmodified source of
+  Prusa Connect by Prusa Research, under its Open Community Licence (non-commercial, and for
+  businesses up to EUR 1M yearly revenue for their own internal use).
+releaseNotes: >-
+  First packaged release: Prusa Connect 0.1.0-beta.1.
+
+developer: Prusa Research
+website: https://github.com/prusa3d/prusa-connect
+dependencies: []
+repo: https://github.com/prusa3d/prusa-connect
+support: https://github.com/prusa3d/prusa-connect/issues
+
+port: 8580
+gallery: []
+path: ""
+
+defaultUsername: ""
+defaultPassword: ""
+# The password umbrelOS shows is the setup code the first-run wizard asks for.
+deterministicPassword: true
+
+submitter: Sam Apostel
+submission: https://github.com/sam-apostel/umbrel-app-store

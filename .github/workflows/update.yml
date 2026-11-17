@@ -1,0 +1,111 @@
+name: Update Prusa Connect
+
+# Once a day, look for a new Prusa Connect release. When there is one, build
+# and smoke-test its image, then commit the new version and digest to main.
+# umbrelOS then offers the update on the app's page; nothing changes on the
+# Umbrel until you click Update there.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Build this upstream release instead of the latest (without the v), e.g. 0.1.0-beta.1"
+        required: false
+        type: string
+
+concurrency:
+  group: update-prusa-connect
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare with the latest upstream release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          current="$(python3 -c 'import yaml; print(yaml.safe_load(open("sam-prusa-connect/umbrel-app.yml"))["version"])')"
+          if [[ -n "${REQUESTED}" ]]; then
+            latest="${REQUESTED#v}"
+          else
+            # Every release is a 0.x pre-release during the beta, so they count.
+            latest="$(gh api repos/prusa3d/prusa-connect/releases \
+              --jq '[.[] | select(.draft | not) | .tag_name | select(test("^v[0-9]"))][0]')"
+            latest="${latest#v}"
+          fi
+          [[ -n "${latest}" ]] || { echo "::error::no upstream release found"; exit 1; }
+          needed=false
+          if [[ -n "${REQUESTED}" || "${latest}" != "${current}" ]] \
+            || grep -q '@sha256:0\{64\}' sam-prusa-connect/docker-compose.yml; then
+            needed=true
+          fi
+          echo "current=${current} latest=${latest} needed=${needed}" | tee -a "${GITHUB_STEP_SUMMARY}"
+          echo "version=${latest}" >> "${GITHUB_OUTPUT}"
+          echo "needed=${needed}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: check
+    if: needs.check.outputs.needed == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+
+  bump:
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install yamllint==1.35.1 pyyaml==6.0.2
+
+      - name: Point the app at the new image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          gh api "repos/prusa3d/prusa-connect/releases/tags/v${VERSION}" --jq '.body // ""' > "${RUNNER_TEMP}/notes.md" || : > "${RUNNER_TEMP}/notes.md"
+          python3 .github/scripts/bump.py "${VERSION}" "${DIGEST}" "${RUNNER_TEMP}/notes.md"
+          yamllint --strict .
+          python3 .github/scripts/validate.py
+          git diff
+
+      - name: Commit to main
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sam-prusa-connect
+          if git diff --cached --quiet; then
+            echo "Nothing to change."
+            exit 0
+          fi
+          git commit -m "Prusa Connect ${VERSION}"
+          git push origin HEAD:main

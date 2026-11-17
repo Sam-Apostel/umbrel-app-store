@@ -1,0 +1,65 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    environment:
+      # <app-id>_<service>_1
+      APP_HOST: sam-prusa-connect_server_1
+      APP_PORT: 8080
+      # Prusa Connect has accounts of its own, and printers and API clients
+      # cannot sign in to umbrelOS, so umbrelOS's login is not put in front.
+      PROXY_AUTH_ADD: "false"
+
+  server:
+    # Built from the unmodified upstream release by .github/workflows/build.yml
+    # (Prusa publishes no image). Bumped by .github/workflows/update.yml.
+    image: ghcr.io/sam-apostel/prusa-connect:0.1.0-beta.1@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    # The image's own user is uid 10001; umbrelOS creates the data folders
+    # as uid 1000, so the server runs as that uid instead.
+    user: "1000:1000"
+    restart: on-failure
+    stop_grace_period: 30s
+    environment:
+      # umbrelOS's per-install password doubles as the first-run setup code.
+      PCL_SETUP_CODE: ${APP_PASSWORD}
+    # The core reads no environment variable, only config.yaml, so the file is
+    # written here at every start. The setup wizard keeps its own answers in
+    # /config/config.d/setup.yaml, which is never touched, and a key set in
+    # this file wins over the wizard's, so it holds only what umbrelOS needs:
+    # - the setup code,
+    # - umbrelOS's app proxy as a trusted proxy (umbrel_main_network),
+    # - the extensions that ship inside the image, offered on the Extensions page.
+    # -addr pins the port app_proxy forwards to; the wizard shows it fixed.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        umask 077
+        cat > /config/config.yaml.new <<EOF
+        # Written by the Umbrel app at every start. Changes here are lost.
+        core:
+          trusted_proxies:
+            - 10.21.0.0/16
+          auth:
+            setup_code: "$${PCL_SETUP_CODE}"
+          modules_local:
+            github.com/prusa3d/fleet-stats: /opt/modules/fleet-stats
+            github.com/prusa3d/parts: /opt/modules/parts
+            github.com/prusa3d/buddy-debug-logs: /opt/modules/buddy-debug-logs
+            github.com/prusa3d/threemf: /opt/modules/threemf
+            github.com/prusa3d/server-slicing: /opt/modules/server-slicing
+            github.com/prusa3d/materials: /opt/modules/materials
+        EOF
+        mv /config/config.yaml.new /config/config.yaml
+        exec /prusa_connect core -addr :8080
+    volumes:
+      # config.yaml (written above) and config.d/: the database with accounts,
+      # printers and permissions, the wizard's answers, history, extensions.
+      - ${APP_DATA_DIR}/data/config:/config
+      # Uploaded print files: /storage is the folder the wizard offers.
+      - ${APP_DATA_DIR}/data/storage:/storage
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
