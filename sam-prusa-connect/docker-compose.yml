@@ -10,13 +10,28 @@ services:
       # cannot sign in to umbrelOS, so umbrelOS's login is not put in front.
       PROXY_AUTH_ADD: "false"
 
+  # umbrelOS does not guarantee who owns the data folders (a folder that is
+  # missing is created by Docker as root), so this one-shot step hands them to
+  # uid 1000, the user the server runs as, before the server starts.
+  permissions:
+    image: ghcr.io/sam-apostel/prusa-connect:0.1.0-beta.1@sha256:59ebd12db2f947b4d318f7dc198e6734dfb3f6b378a2f432b2a257622c3b07a7
+    user: "0:0"
+    entrypoint: ["/bin/chown", "-R", "1000:1000", "/config", "/storage"]
+    restart: "no"
+    volumes:
+      - ${APP_DATA_DIR}/data/config:/config
+      - ${APP_DATA_DIR}/data/storage:/storage
+
   server:
     # Built from the unmodified upstream release by .github/workflows/build.yml
     # (Prusa publishes no image). Bumped by .github/workflows/update.yml.
     image: ghcr.io/sam-apostel/prusa-connect:0.1.0-beta.1@sha256:59ebd12db2f947b4d318f7dc198e6734dfb3f6b378a2f432b2a257622c3b07a7
-    # The image's own user is uid 10001; umbrelOS creates the data folders
-    # as uid 1000, so the server runs as that uid instead.
+    # The image's own user is uid 10001; umbrelOS's data folders belong to
+    # uid 1000 (see permissions above), so the server runs as that uid.
     user: "1000:1000"
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
     restart: on-failure
     stop_grace_period: 30s
     environment:

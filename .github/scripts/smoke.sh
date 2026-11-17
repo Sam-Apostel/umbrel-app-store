@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Starts sam-prusa-connect from its own docker-compose.yml the way umbrelOS
-# does (data folders owned by uid 1000, APP_PASSWORD set, no app_proxy), then
-# checks that it becomes healthy, that umbrelOS's password is accepted as the
-# setup code, and that it requires a sign-in after a restart.
+# does (APP_PASSWORD set, no app_proxy), then checks that it becomes healthy,
+# that the wizard's default upload folder /storage is writable, that
+# umbrelOS's password is accepted as the setup code, and that it requires a
+# sign-in after a restart.
 #
 # Usage: smoke.sh <image@digest> <expected version>
 set -euo pipefail
@@ -18,8 +19,12 @@ export APP_DATA_DIR="${work}/app"
 APP_PASSWORD="$(openssl rand -hex 32)" # same shape as umbrelOS's: 64 hex characters
 export APP_PASSWORD
 
+# The worst case umbrelOS can hand over: config owned by uid 1000, the
+# storage folder owned by root (what Docker does with a missing folder).
 mkdir -p "${APP_DATA_DIR}/data/config" "${APP_DATA_DIR}/data/storage"
-sudo chown -R 1000:1000 "${APP_DATA_DIR}/data"
+sudo chown -R 1000:1000 "${APP_DATA_DIR}/data/config"
+sudo chown -R 0:0 "${APP_DATA_DIR}/data/storage"
+sudo chmod 755 "${APP_DATA_DIR}/data/storage"
 
 python3 - "${app_dir}/docker-compose.yml" "${work}/compose.yml" "${image}" "${port}" <<'PY'
 import sys, yaml
@@ -28,7 +33,8 @@ compose = yaml.safe_load(open(source))
 compose.pop("version", None)
 services = compose["services"]
 services.pop("app_proxy")  # umbrelOS's own service, not runnable here
-services["server"]["image"] = image
+for service in services.values():
+    service["image"] = image
 services["server"]["ports"] = [port + ":8080"]
 yaml.safe_dump(compose, open(target, "w"), sort_keys=False)
 PY
@@ -67,6 +73,11 @@ echo "health: ${health}"
 grep -q "\"version\":\"${version}\"" <<<"${health}" || fail "health does not report version ${version}"
 
 [[ "$(sudo stat -c %u "${APP_DATA_DIR}/data/config/config.yaml")" == "1000" ]] || fail "config.yaml is not owned by uid 1000"
+
+storage="$(curl -sS -X POST "${base}/api/v1/setup/storage" -H 'content-type: application/json' \
+  -H "X-Setup-Code: ${APP_PASSWORD}" -d '{"root":"/storage"}')"
+echo "storage check: ${storage}"
+grep -q '"writable":true' <<<"${storage}" || fail "the wizard's default folder /storage is not writable"
 
 setup="$(curl -sS -X POST "${base}/api/v1/setup" -H 'content-type: application/json' \
   -d "{\"code\":\"${APP_PASSWORD}\",\"mode\":\"required\",\"account\":{\"username\":\"smoke\",\"password\":\"smoke-test-password-1\"},\"admission\":\"ask\"}")"
