@@ -13,7 +13,7 @@ services:
   server:
     # Built from the unmodified upstream release by .github/workflows/build.yml
     # (Prusa publishes no image). Bumped by .github/workflows/update.yml.
-    image: ghcr.io/sam-apostel/prusa-connect:0.1.0-beta.1@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    image: ghcr.io/sam-apostel/prusa-connect:0.1.0-beta.1@sha256:59ebd12db2f947b4d318f7dc198e6734dfb3f6b378a2f432b2a257622c3b07a7
     # The image's own user is uid 10001; umbrelOS creates the data folders
     # as uid 1000, so the server runs as that uid instead.
     user: "1000:1000"
