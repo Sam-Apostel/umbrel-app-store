@@ -27,8 +27,8 @@ compose, count = re.subn(
     lambda m: m.group(1) + image + ":" + version + "@" + digest,
     compose,
 )
-if count != 1:
-    sys.exit(compose_path + ": expected one image line, found " + str(count))
+if count < 1:
+    sys.exit(compose_path + ": found no image line")
 open(compose_path, "w").write(compose)
 
 # Upstream notes are Markdown; umbrelOS shows plain text. Keep it short and

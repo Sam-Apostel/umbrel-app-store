@@ -31,3 +31,25 @@ jobs:
         run: |
           for f in .github/scripts/*.sh; do bash -n "$f"; done
           for f in */exports.sh; do [[ -e "$f" ]] && bash -n "$f"; done; true
+
+  smoke:
+    # Starts the app from this commit's docker-compose.yml with the image it
+    # pins, so a packaging change is tested before umbrelOS sees it.
+    runs-on: ${{ matrix.runner }}
+    needs: validate
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the app the way umbrelOS does
+        run: |
+          image="$(python3 -c 'import yaml; print(yaml.safe_load(open("sam-prusa-connect/docker-compose.yml"))["services"]["server"]["image"])')"
+          version="$(python3 -c 'import yaml; print(yaml.safe_load(open("sam-prusa-connect/umbrel-app.yml"))["version"])')"
+          if [[ "${image}" == *"@sha256:0000000000000000000000000000000000000000000000000000000000000000" ]]; then
+            echo "No image built yet; skipping."
+            exit 0
+          fi
+          bash .github/scripts/smoke.sh "${image}" "${version}"
